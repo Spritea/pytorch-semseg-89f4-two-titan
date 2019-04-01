@@ -1,0 +1,15 @@
+# img
+*.bmp
+*.jpg
+*.png
+*.tif
+*.tiff
+# numpy
+*.npy
+# py buffer
+*.pyc
+# pycharm
+.idea
+/.idea/
+# pytorch
+*.pt

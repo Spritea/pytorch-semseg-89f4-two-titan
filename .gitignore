@@ -13,3 +13,6 @@
 /.idea/
 # pytorch
 *.pt
+/runs/
+/pretrain/
+/dataset/

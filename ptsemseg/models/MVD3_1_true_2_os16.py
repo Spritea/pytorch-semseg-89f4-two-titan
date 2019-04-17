@@ -4,7 +4,6 @@ import torch.utils.model_zoo as model_zoo
 import torch
 from torch.nn import functional as F
 
-
 models_urls = {
     '101_voc': 'https://cloudstor.aarnet.edu.au/plus/s/Owmttk9bdPROwc6/download',
     '18_imagenet': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -14,6 +13,19 @@ models_urls = {
     '101_imagenet': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
 }
 
+def make_layer_dilate(block, in_channels, channels, num_blocks, stride=1, dilation=2):
+
+    multi_grid = [1]*num_blocks
+    for i in range(len(multi_grid)):
+        multi_grid[i]=multi_grid[i]*dilation
+    blocks = []
+    for grid in multi_grid:
+        blocks.append(block(in_channels=in_channels, channels=channels, stride=stride, dilation=grid))
+        in_channels = block.expansion*channels
+
+    layer = nn.Sequential(*blocks) # (*blocks: call with unpacked list entires as arguments)
+
+    return layer
 
 def maybe_download(model_name, model_url, model_dir=None, map_location=None):
     import os, sys
@@ -31,118 +43,6 @@ def maybe_download(model_name, model_url, model_dir=None, map_location=None):
         urllib.request.urlretrieve(url, cached_file)
     return torch.load(cached_file, map_location=map_location)
 
-def make_layer_dilate(block, in_channels, channels, num_blocks, stride=1, dilation=2):
-
-    multi_grid = [1]*num_blocks
-    for i in range(len(multi_grid)):
-        multi_grid[i]=multi_grid[i]*dilation
-    blocks = []
-    for grid in multi_grid:
-        blocks.append(block(in_channels=in_channels, channels=channels, stride=stride, dilation=grid))
-        in_channels = block.expansion*channels
-
-    layer = nn.Sequential(*blocks) # (*blocks: call with unpacked list entires as arguments)
-
-    return layer
-
-class RefineBlock(nn.Module):
-    def __init__(self, in_channel):
-        super(RefineBlock, self).__init__()
-        self.c1 = nn.Conv2d(in_channel, 512,kernel_size=1, stride=1, padding=0, bias=False)
-        self.c3_1 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(512)
-        self.relu = nn.ReLU(inplace=True)
-        self.c3_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1, bias=False)
-
-    def forward(self, x):
-        x1 = self.c1(x)
-        x = self.c3_1(x1)
-        x = self.bn(x)
-        x = self.relu(x)
-        x = self.c3_2(x)
-        out = x1 + x
-
-        return out
-class Bottleneck_dilate(nn.Module):
-    expansion = 4
-
-    def __init__(self, in_channels, channels, stride=1, dilation=1):
-        super(Bottleneck_dilate, self).__init__()
-
-        out_channels = self.expansion*channels
-
-        self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(channels)
-
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False)
-        self.bn2 = nn.BatchNorm2d(channels)
-
-        self.conv3 = nn.Conv2d(channels, out_channels, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(out_channels)
-
-        if (stride != 1) or (in_channels != out_channels):
-            conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
-            bn = nn.BatchNorm2d(out_channels)
-            self.downsample = nn.Sequential(conv, bn)
-        else:
-            self.downsample = nn.Sequential()
-
-    def forward(self, x):
-        # (x has shape: (batch_size, in_channels, h, w))
-
-        out = F.relu(self.bn1(self.conv1(x))) # (shape: (batch_size, channels, h, w))
-        out = F.relu(self.bn2(self.conv2(out))) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
-        out = self.bn3(self.conv3(out)) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
-
-        out = out + self.downsample(x) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
-
-        out = F.relu(out) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
-
-        return out
-class FPA(nn.Module):
-    def __init__(self, in_channel, out_channel):
-        super(FPA, self).__init__()
-
-        self.c7_1 = nn.Conv2d(in_channel, out_channel, kernel_size=7, stride=1, padding=3, bias=False)
-        self.c5_1 = nn.Conv2d(in_channel, out_channel, kernel_size=5, stride=1, padding=2, bias=False)
-        self.c3_1 = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
-
-        self.c7_2 = nn.Conv2d(out_channel, out_channel, kernel_size=7, stride=1, padding=3, bias=False)
-        self.c5_2 = nn.Conv2d(out_channel, out_channel, kernel_size=5, stride=1, padding=2, bias=False)
-        self.c3_2 = nn.Conv2d(out_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        # self.avg_pool = nn.AdaptiveAvgPool2d(input_size)
-        self.c1_gpb = nn.Conv2d(in_channel, out_channel, kernel_size=1, bias=False)
-
-        self.bn = nn.BatchNorm2d(out_channel)
-        self.relu = nn.ReLU(inplace=True)
-    def forward(self, x):
-        input_size = x.size()[2:]
-        x7_1=self.c7_1(x)
-        x7_1=self.bn(x7_1)
-        x7_1=self.relu(x7_1)
-        x7_2=self.c7_2(x7_1)
-        x7_2=self.bn(x7_2)
-
-        x5_1 = self.c5_1(x)
-        x5_1 = self.bn(x5_1)
-        x5_1 = self.relu(x5_1)
-        x5_2 = self.c5_2(x5_1)
-        x5_2 = self.bn(x5_2)
-
-        x3_1 = self.c3_1(x)
-        x3_1 = self.bn(x3_1)
-        x3_1 = self.relu(x3_1)
-        x3_2 = self.c3_2(x3_1)
-        x3_2 = self.bn(x3_2)
-
-        x_gp = self.avg_pool(x)
-        x_gp = self.c1_gpb(x_gp)
-        x_gp = self.bn(x_gp)
-        x_gp = F.upsample(x_gp, size=input_size, mode='bilinear')
-
-        out = torch.cat([x_gp, x7_2, x5_2, x3_2], dim=1)
-        return out
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -154,22 +54,39 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-def conv3x3_same_bn(same_planes):
-    return nn.Sequential(nn.Conv2d(same_planes,same_planes,kernel_size=3,stride=1,padding=1,bias=False),
+## wrong!! change ReLU to BN
+def conv3x3_bn(in_channel, out_channel):
+    return nn.Sequential(nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False),
                          nn.ReLU(inplace=True))
 
-class MultiResolutionFuse(nn.Module):
+
+class GAU(nn.Module):
     def __init__(self, in_size, out_size):
-        super(MultiResolutionFuse, self).__init__()
-        self.conv = nn.Conv2d(in_size, out_size, kernel_size=1, stride=1, bias=False)
+        super(GAU, self).__init__()
+        self.in_size = in_size
+        self.out_size = out_size
+        self.conv = nn.Conv2d(in_size*2, out_size, kernel_size=1, stride=1, bias=False)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.bn=nn.BatchNorm2d(in_size)
+        self.relu=nn.ReLU(inplace=True)
 
     def forward(self, input_low, input_high):
+
         high_size = input_high.size()[2:]
         # low channel usually > high channel
-        input_low = self.conv(input_low)
+        # if self.in_size != self.out_size:
+        #     input_low = self.conv(input_low)
         upsample_low = F.upsample(input_low, high_size, mode='bilinear')
-        cat = torch.cat([upsample_low, input_high], dim=1)
-        return cat
+        input_cat = torch.cat([upsample_low, input_high], dim=1)
+        input_cat=self.conv(input_cat)
+        input_cat=self.bn(input_cat)
+        input_cat=self.relu(input_cat)
+
+        gp = self.avg_pool(input_cat)
+        multiply=gp*input_cat
+        # out=multiply+input_cat
+        out = multiply + input_high
+        return out
 
 
 class BasicBlock(nn.Module):
@@ -241,11 +158,127 @@ class Bottleneck(nn.Module):
 
         return out
 
-#add BN
-class MVD2_1_os16_ResNet(nn.Module):
+class Bottleneck_dilate(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_channels, channels, stride=1, dilation=1):
+        super(Bottleneck_dilate, self).__init__()
+
+        out_channels = self.expansion*channels
+
+        self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(channels)
+
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+        self.conv3 = nn.Conv2d(channels, out_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels)
+
+        if (stride != 1) or (in_channels != out_channels):
+            conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
+            bn = nn.BatchNorm2d(out_channels)
+            self.downsample = nn.Sequential(conv, bn)
+        else:
+            self.downsample = nn.Sequential()
+
+    def forward(self, x):
+        # (x has shape: (batch_size, in_channels, h, w))
+
+        out = F.relu(self.bn1(self.conv1(x))) # (shape: (batch_size, channels, h, w))
+        out = F.relu(self.bn2(self.conv2(out))) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+        out = self.bn3(self.conv3(out)) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        out = out + self.downsample(x) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        out = F.relu(out) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        return out
+
+
+class RefineBlock(nn.Module):
+    def __init__(self, in_channel):
+        super(RefineBlock, self).__init__()
+        self.c1 = nn.Conv2d(in_channel, 512, kernel_size=1, stride=1, padding=0, bias=False)
+        self.c3_1 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn = nn.BatchNorm2d(512)
+        self.relu = nn.ReLU(inplace=True)
+        self.c3_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1, bias=False)
+
+    def forward(self, x):
+        x1 = self.c1(x)
+        x = self.c3_1(x1)
+        x = self.bn(x)
+        x = self.relu(x)
+        x = self.c3_2(x)
+        out = x1 + x
+
+        return out
+
+
+class FPA(nn.Module):
+    def __init__(self, in_channel, out_channel):
+        super(FPA, self).__init__()
+
+        self.c15_1 = nn.Conv2d(in_channel, out_channel, kernel_size=15, stride=1, padding=7, bias=False)
+        self.c11_1 = nn.Conv2d(in_channel, out_channel, kernel_size=11, stride=1, padding=5, bias=False)
+        self.c7_1 = nn.Conv2d(in_channel, out_channel, kernel_size=7, stride=1, padding=3, bias=False)
+        self.c3_1 = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.c15_2 = nn.Conv2d(in_channel, out_channel, kernel_size=15, stride=1, padding=7, bias=False)
+        self.c11_2 = nn.Conv2d(in_channel, out_channel, kernel_size=11, stride=1, padding=5, bias=False)
+        self.c7_2 = nn.Conv2d(in_channel, out_channel, kernel_size=7, stride=1, padding=3, bias=False)
+        self.c3_2 = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.c1_gpb = nn.Conv2d(in_channel, out_channel, kernel_size=1, bias=False)
+
+        self.bn = nn.BatchNorm2d(out_channel)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        input_size = x.size()[2:]
+
+        x15_1 = self.c15_1(x)
+        x15_1 = self.bn(x15_1)
+        x15_1 = self.relu(x15_1)
+        x15_2 = self.c15_2(x15_1)
+        x15_2 = self.bn(x15_2)
+
+        x11_1 = self.c11_1(x)
+        x11_1 = self.bn(x11_1)
+        x11_1 = self.relu(x11_1)
+        x11_2 = self.c11_2(x11_1)
+        x11_2 = self.bn(x11_2)
+
+        x7_1 = self.c7_1(x)
+        x7_1 = self.bn(x7_1)
+        x7_1 = self.relu(x7_1)
+        x7_2 = self.c7_2(x7_1)
+        x7_2 = self.bn(x7_2)
+
+        x3_1 = self.c3_1(x)
+        x3_1 = self.bn(x3_1)
+        x3_1 = self.relu(x3_1)
+        x3_2 = self.c3_2(x3_1)
+        x3_2 = self.bn(x3_2)
+
+        x_gp = self.avg_pool(x)
+        x_gp = self.c1_gpb(x_gp)
+        x_gp = self.bn(x_gp)
+        x_gp = F.upsample(x_gp, size=input_size, mode='bilinear')
+
+        out = torch.cat([x_gp, x15_2, x11_2, x7_2, x3_2], dim=1)
+        return out
+
+
+# MV3_1+ dilated ResNet
+class MVD3_1_true_2_os16_ResNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000):
-        super(MVD2_1_os16_ResNet, self).__init__()
+        super(MVD3_1_true_2_os16_ResNet, self).__init__()
+        # self.do = nn.Dropout(p=0.5)
+
         self.inplanes = 64
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
@@ -258,32 +291,32 @@ class MVD2_1_os16_ResNet(nn.Module):
         self.rb2_1 = RefineBlock(512)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.rb3_1 = RefineBlock(1024)
+        # 只改了layer4,表明是OS=16
+        self.layer4 = make_layer_dilate(Bottleneck_dilate, in_channels=4 * 256, channels=512, num_blocks=layers[3],
+                                        stride=1, dilation=2)
 
-        #只改了layer4,表明是OS=16
-        self.layer4 = make_layer_dilate(Bottleneck_dilate, in_channels=4 * 256, channels=512, num_blocks=layers[3], stride=1, dilation=2)
-        self.rb4_1 = RefineBlock(2048)
-
-        # self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         # self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.rb4_1 = RefineBlock(2048)
         # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         # self.fc = nn.Linear(512 * block.expansion, num_classes)
         # only for >=res50
 
-        self.fpa=FPA(512,512)
-        self.rb4_2 = RefineBlock(512 * 4)
+        # self.fpa=FPA(2048,512)
+        self.fpa = FPA(512, 512)
+        self.rb4_2 = RefineBlock(512 * 5)
 
-        self.fuse43 = MultiResolutionFuse(512, 512)
+        self.fuse43 = GAU(512, 512)
         # self.post_proc43 = conv3x3_bn(512*2,512)
-        self.rb3_2 = RefineBlock(512 * 2)
-        self.fuse32 = MultiResolutionFuse(512, 512)
-        self.rb2_2 = RefineBlock(512 * 2)
+        self.rb3_2 = RefineBlock(512)
+        self.fuse32 = GAU(512, 512)
+        self.rb2_2 = RefineBlock(512)
         # self.post_proc32 = conv3x3_bn(512)
-        self.fuse21 = MultiResolutionFuse(512, 512)
-        self.rb1_2 = RefineBlock(512 * 2)
+        self.fuse21 = GAU(512, 512)
+        self.rb1_2 = RefineBlock(512)
         # self.post_proc21 = conv3x3_bn(512)
 
-        self.class_conv=nn.Conv2d(512, num_classes, kernel_size=3, stride=1,
-                                  padding=1, bias=True)
+        self.class_conv = nn.Conv2d(512, num_classes, kernel_size=3, stride=1,
+                                    padding=1, bias=True)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -328,18 +361,20 @@ class MVD2_1_os16_ResNet(nn.Module):
         x_fuse32 = self.rb2_2(x_fuse32)
         x_fuse21 = self.fuse21(x_fuse32, l1)
         x_fuse21 = self.rb1_2(x_fuse21)
+
+        # x_fuse21=self.do(x_fuse21)
         x = self.class_conv(x_fuse21)
         x = F.upsample(x, ori_size, mode='bilinear')
 
         return x
 
 
-def MVD2_1_os16_ResNet18(num_classes,pretrained=False, **kwargs):
+def MVD3_1_true_2_os16_ResNet18(num_classes, pretrained=False, **kwargs):
     """Constructs a MV1_ResNet-18 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = MVD2_1_os16_ResNet(BasicBlock, [2, 2, 2, 2], **kwargs,num_classes=num_classes)
+    model = MVD3_1_true_2_os16_ResNet(BasicBlock, [2, 2, 2, 2], **kwargs, num_classes=num_classes)
     if pretrained:
         key = '18_imagenet'
         url = models_urls[key]
@@ -347,12 +382,12 @@ def MVD2_1_os16_ResNet18(num_classes,pretrained=False, **kwargs):
     return model
 
 
-def MVD2_1_os16_ResNet34(num_classes,pretrained=False, **kwargs):
+def MVD3_1_true_2_os16_ResNet34(num_classes, pretrained=False, **kwargs):
     """Constructs a MV1_ResNet-34 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = MVD2_1_os16_ResNet(BasicBlock, [3, 4, 6, 3], **kwargs,num_classes=num_classes)
+    model = MVD3_1_true_2_os16_ResNet(BasicBlock, [3, 4, 6, 3], **kwargs, num_classes=num_classes)
     if pretrained:
         key = '34_imagenet'
         url = models_urls[key]
@@ -360,12 +395,12 @@ def MVD2_1_os16_ResNet34(num_classes,pretrained=False, **kwargs):
     return model
 
 
-def MVD2_1_os16_ResNet50(num_classes,pretrained=True, **kwargs):
+def MVD3_1_true_2_os16_ResNet50(num_classes, pretrained=True, **kwargs):
     """Constructs a MV1_ResNet-50 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = MVD2_1_os16_ResNet(Bottleneck, [3, 4, 6, 3], **kwargs,num_classes=num_classes)
+    model = MVD3_1_true_2_os16_ResNet(Bottleneck, [3, 4, 6, 3], **kwargs, num_classes=num_classes)
     if pretrained:
         key = '50_imagenet'
         url = models_urls[key]
@@ -374,12 +409,12 @@ def MVD2_1_os16_ResNet50(num_classes,pretrained=True, **kwargs):
     return model
 
 
-def MVD2_1_os16_ResNet101(num_classes,pretrained=True, **kwargs):
+def MVD3_1_true_2_os16_ResNet101(num_classes, pretrained=False, **kwargs):
     """Constructs a MV1_ResNet-101 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = MVD2_1_os16_ResNet(Bottleneck, [3, 4, 23, 3], **kwargs,num_classes=num_classes)
+    model = MVD3_1_true_2_os16_ResNet(Bottleneck, [3, 4, 23, 3], **kwargs, num_classes=num_classes)
     if pretrained:
         key = '101_imagenet'
         url = models_urls[key]
@@ -387,12 +422,12 @@ def MVD2_1_os16_ResNet101(num_classes,pretrained=True, **kwargs):
     return model
 
 
-def MVD2_1_os16_ResNet152(num_classes,pretrained=False, **kwargs):
+def MVD3_1_true_2_os16_ResNet152(num_classes, pretrained=False, **kwargs):
     """Constructs a MV1_ResNet-152 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = MVD2_1_os16_ResNet(Bottleneck, [3, 8, 36, 3], **kwargs,num_classes=num_classes)
+    model = MVD3_1_true_2_os16_ResNet(Bottleneck, [3, 8, 36, 3], **kwargs, num_classes=num_classes)
     if pretrained:
         key = '152_imagenet'
         url = models_urls[key]

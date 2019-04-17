@@ -24,6 +24,7 @@ from ptsemseg.models.MV3_1_true_2 import MV3_1_true_2_ResNet50
 from ptsemseg.models.MV2_base_0 import MV2_base_0_ResNet50
 # from ptsemseg.models.MV2_9_1 import MV2_10_ResNet50
 from ptsemseg.models.MV3_1_true_2_res101 import MV3_1_true_2_ResNet101
+from ptsemseg.models.MVD3_1_true_2_os16 import MVD3_1_true_2_os16_ResNet50
 
 def get_model(model_dict, n_classes):
     name = model_dict['arch']
@@ -96,7 +97,7 @@ def _get_model_instance(name):
             "deeplabv3_os16_MG": DeepLabV3_MG,
             "deeplabv3_os16_MG_plus": DeepLabV3_MG_plus,
             # "deeplabv3":Res_Deeplab,
-            "mv3_res50": MV3_1_true_2_ResNet50,
+            "mv3_res50": MVD3_1_true_2_os16_ResNet50,
             # "mv2_res50": MV2_10_ResNet50,
             "mv3_res101":MV3_1_true_2_ResNet101,
 

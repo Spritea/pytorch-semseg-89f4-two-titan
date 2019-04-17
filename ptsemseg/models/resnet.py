@@ -125,7 +125,9 @@ class ResNet_Bottleneck_OS16(nn.Module):
             print ("pretrained resnet, 152")
         else:
             raise Exception("num_layers must be in {50, 101, 152}!")
-
+        #此处用的是OS=8,不是OS=16,OS=8的精度理论上略高OS=16,但模型训练时间更长
+        #OS=16是官方paper里用的,只是为了减少训练时间
+        #正确的OS=16的配置在单卡spl03那个机器上跑的
         self.layer4 = make_layer(Bottleneck, in_channels=512, channels=256, num_blocks=6, stride=1, dilation=2)
 
         self.layer5 = make_layer(Bottleneck, in_channels=4*256, channels=512, num_blocks=3, stride=1, dilation=4)

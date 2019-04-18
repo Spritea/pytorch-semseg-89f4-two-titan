@@ -25,6 +25,7 @@ from ptsemseg.models.MV2_base_0 import MV2_base_0_ResNet50
 # from ptsemseg.models.MV2_9_1 import MV2_10_ResNet50
 from ptsemseg.models.MV3_1_true_2_res101 import MV3_1_true_2_ResNet101
 from ptsemseg.models.MVD3_1_true_2_os16 import MVD3_1_true_2_os16_ResNet50
+from ptsemseg.models.MV3_1_true_2_dropout import MV3_1_true_2_dropout_ResNet50
 
 def get_model(model_dict, n_classes):
     name = model_dict['arch']
@@ -66,6 +67,8 @@ def get_model(model_dict, n_classes):
     #     model=model(num_classes=n_classes)
     elif name=="mv3_res50":
         model=model(num_classes=n_classes,**param_dict)
+    elif name=="mv3_dropout_res50":
+        model=model(num_classes=n_classes,**param_dict)
     elif name=="mv3_res101":
         model=model(num_classes=n_classes,**param_dict)
     elif name=="mv2_res50":
@@ -100,6 +103,7 @@ def _get_model_instance(name):
             "mv3_res50": MVD3_1_true_2_os16_ResNet50,
             # "mv2_res50": MV2_10_ResNet50,
             "mv3_res101":MV3_1_true_2_ResNet101,
+            "mv3_dropout_res50":MV3_1_true_2_dropout_ResNet50,
 
         }[name]
     except:

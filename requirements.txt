@@ -7,3 +7,6 @@ tqdm==4.11.2
 pydensecrf
 protobuf
 tensorboardX
+pyyaml
+opencv-python
+natsort
